@@ -1,0 +1,38 @@
+name: 'Build containers and push to docker hub'
+
+on:
+  push:
+    branches: master
+  pull_request:
+    branches: master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: 'Checkout the code'
+      uses: actions/checkout@v2
+
+    - name: 'Docker login'
+      run: echo '${{ secrets.GITHUB_TOKEN }}' | docker login docker.pkg.github.com --username ${{ github.actor }} --password-stdin
+
+    - name: 'Build docker image for netbox'
+      run: |
+        docker build -t netbox netbox
+
+    - name: 'Generate secret'
+      id: secret_generation
+      run: echo "::set-output name=secret_key::$(docker run --entrypoint python3 netbox /opt/netbox/netbox/generate_secret_key.py)"
+
+    - name: 'Build docker image for nginx'
+      run: |
+        docker run -e SECRET_KEY='${{steps.secret_generation.outputs.secret_key}}' -v $(pwd)/nginx/static:/opt/netbox/netbox/static --entrypoint python3 netbox /opt/netbox/netbox/manage.py collectstatic --no-input
+        docker build -t nginx nginx
+
+    - name: 'Tag image for master and push to Docker Hub'
+      if: ${{ github.event_name == 'push' }}
+      run: |
+        docker tag netbox:latest docker.pkg.github.com/schubergphilis/netbox-docker/netbox-app:${GITHUB_SHA::8}
+        docker tag nginx:latest docker.pkg.github.com/schubergphilis/netbox-docker/netbox-nginx:${GITHUB_SHA::8}
+        docker push docker.pkg.github.com/schubergphilis/netbox-docker/netbox-app:${GITHUB_SHA::8}
+        docker push docker.pkg.github.com/schubergphilis/netbox-docker/netbox-nginx:${GITHUB_SHA::8}
